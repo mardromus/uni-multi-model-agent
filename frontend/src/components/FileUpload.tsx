@@ -7,6 +7,7 @@ interface FileUploadProps {
   files: UploadedFile[]
   onFilesChange: (files: UploadedFile[]) => void
   disabled?: boolean
+  type?: 'tags' | 'button' | 'full'
 }
 
 function getFileIcon(contentType: string) {
@@ -29,7 +30,7 @@ function formatSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
 
-export function FileUpload({ files, onFilesChange, disabled }: FileUploadProps) {
+export function FileUpload({ files, onFilesChange, disabled, type = 'full' }: FileUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState<string[]>([])
   const [isDragging, setIsDragging] = useState(false)
@@ -85,6 +86,67 @@ export function FileUpload({ files, onFilesChange, disabled }: FileUploadProps) 
 
   const removeFile = (fileId: string) => {
     onFilesChange(files.filter((f) => f.file_id !== fileId))
+  }
+
+  if (type === 'tags') {
+    if (files.length === 0 && uploading.length === 0) return null
+    return (
+      <div className="flex flex-wrap gap-1.5 px-3 py-2 border-b border-border/20 max-w-full items-center bg-secondary/10 rounded-t-2xl">
+        {/* Uploading indicators */}
+        {uploading.map((name) => (
+          <div key={name} className="file-tag animate-shimmer opacity-80 text-[11px] py-0.5 px-2">
+            <div className="h-2.5 w-2.5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+            <span className="max-w-[100px] truncate text-muted-foreground">{name}</span>
+          </div>
+        ))}
+
+        {/* Uploaded files */}
+        {files.map((f) => (
+          <div key={f.file_id} className="file-tag group/file text-[11px] py-0.5 px-2">
+            {getFileIcon(f.content_type)}
+            <span className="max-w-[100px] truncate" title={f.filename}>
+              {getFileEmoji(f.content_type)} {f.filename}
+            </span>
+            <span className="text-muted-foreground/60 text-[9px]">
+              {formatSize(f.size_bytes)}
+            </span>
+            <button
+              onClick={() => removeFile(f.file_id)}
+              className="ml-0.5 opacity-0 group-hover/file:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+              disabled={disabled}
+              type="button"
+            >
+              <X className="h-2.5 w-2.5" />
+            </button>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  if (type === 'button') {
+    return (
+      <div className="relative shrink-0">
+        <button
+          onClick={() => !disabled && inputRef.current?.click()}
+          className="h-10 w-10 rounded-xl hover:bg-white/5 text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors hover:scale-105 active:scale-95"
+          disabled={disabled}
+          title="Attach files"
+          type="button"
+        >
+          <Upload className="h-4 w-4" />
+        </button>
+        <input
+          ref={inputRef}
+          type="file"
+          multiple
+          accept="image/*,.pdf,audio/*"
+          className="hidden"
+          onChange={(e) => handleFiles(e.target.files)}
+          disabled={disabled}
+        />
+      </div>
+    )
   }
 
   return (

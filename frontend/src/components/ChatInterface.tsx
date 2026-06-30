@@ -47,7 +47,7 @@ export function ChatInterface() {
     if (textarea) {
       textarea.style.height = 'auto'
       const scrollHeight = textarea.scrollHeight
-      textarea.style.height = `${Math.min(Math.max(scrollHeight, 52), 160)}px`
+      textarea.style.height = `${Math.min(Math.max(scrollHeight, 40), 160)}px`
     }
   }, [input])
 
@@ -277,37 +277,48 @@ export function ChatInterface() {
           )}
 
           {/* Input area */}
-          <div className="shrink-0 border-t border-border/50 p-4 space-y-3">
-            <FileUpload files={files} onFilesChange={setFiles} disabled={isLoading} />
-            <div className="flex gap-2 items-end glow-focus rounded-xl">
-              <Textarea
-                ref={textareaRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Ask anything — or upload files and let the agent decide..."
-                className="min-h-[52px] max-h-[160px] resize-none rounded-xl border-border/60 bg-card/50 focus:bg-card/80 transition-colors text-sm"
-                disabled={isLoading}
-                rows={1}
-              />
-              <Button
-                onClick={handleSend}
-                disabled={isLoading || (!input.trim() && files.length === 0)}
-                size="icon"
-                className="shrink-0 h-[52px] w-12 rounded-xl btn-gradient disabled:opacity-40 disabled:transform-none"
-              >
-                {isLoading ? (
-                  <div className="typing-dots flex gap-0.5">
-                    <span /><span /><span />
-                  </div>
-                ) : (
-                  <Send className="h-4 w-4" />
-                )}
-              </Button>
+          <div className="shrink-0 border-t border-border/30 p-4 bg-background/50 backdrop-blur-md">
+            <div className="max-w-4xl mx-auto space-y-2.5">
+              
+              {/* Unified Chat Input Box */}
+              <div className="flex flex-col rounded-2xl border border-border bg-card/45 focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/50 transition-all duration-200 shadow-xl backdrop-blur-sm overflow-hidden">
+                {/* Active uploads inside capsule */}
+                <FileUpload files={files} onFilesChange={setFiles} disabled={isLoading} type="tags" />
+
+                <div className="flex gap-2 items-end p-2.5">
+                  {/* Attachment button inline */}
+                  <FileUpload files={files} onFilesChange={setFiles} disabled={isLoading} type="button" />
+
+                  <Textarea
+                    ref={textareaRef}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Ask anything — or upload files and let the agent decide..."
+                    className="flex-1 min-h-[40px] max-h-[160px] resize-none border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none focus:ring-0 p-2 text-sm leading-relaxed"
+                    disabled={isLoading}
+                    rows={1}
+                  />
+                  <Button
+                    onClick={handleSend}
+                    disabled={isLoading || (!input.trim() && files.length === 0)}
+                    size="icon"
+                    className="shrink-0 h-10 w-10 rounded-xl btn-gradient disabled:opacity-30 disabled:transform-none transition-all duration-200"
+                  >
+                    {isLoading ? (
+                      <div className="typing-dots flex gap-0.5">
+                        <span /><span /><span />
+                      </div>
+                    ) : (
+                      <Send className="h-4 w-4" />
+                    )}
+                  </Button>
+                </div>
+              </div>
+              <p className="text-[10px] text-muted-foreground text-center opacity-60">
+                Press <kbd className="px-1 py-0.5 rounded bg-muted/50 text-[9px] font-mono border border-border/40">Enter</kbd> to send · <kbd className="px-1 py-0.5 rounded bg-muted/50 text-[9px] font-mono border border-border/40">Shift+Enter</kbd> for newline
+              </p>
             </div>
-            <p className="text-[10px] text-muted-foreground text-center">
-              Press <kbd className="px-1 py-0.5 rounded bg-muted text-xs font-mono">Enter</kbd> to send · <kbd className="px-1 py-0.5 rounded bg-muted text-xs font-mono">Shift+Enter</kbd> for newline
-            </p>
           </div>
         </div>
 
