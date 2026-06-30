@@ -70,7 +70,7 @@ class CrossInputReasonerTool(BaseTool):
         settings = get_settings()
         combined_context = self._build_context(tool_outputs, extracted_texts)
 
-        if not settings.openai_api_key:
+        if not settings.cerebras_api_key:
             return self._fallback_reasoning(combined_context, user_question)
 
         try:

@@ -3,7 +3,8 @@ FROM python:3.12-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    WHISPER_CACHE=/root/.cache/whisper
 
 WORKDIR /app
 
@@ -25,14 +26,17 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # Copy backend source
 COPY backend/ ./
 
-# Install dependencies
+# Install all dependencies (including dev for tiktoken)
 RUN uv pip install --system ".[dev]"
+
+# Pre-download Whisper base model during build (avoids cold-start delay)
+RUN python -c "import whisper; whisper.load_model('base')" || echo "Whisper pre-download skipped (no GPU context)"
 
 RUN mkdir -p /tmp/uploads /tmp/traces
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
     CMD curl -f http://localhost:8000/api/v1/health || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

@@ -6,13 +6,16 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - CEREBRAS_API_KEY=${CEREBRAS_API_KEY}
+      - CEREBRAS_BASE_URL=${CEREBRAS_BASE_URL:-https://api.cerebras.ai/v1}
+      - MODEL_NAME=${MODEL_NAME:-gemma-4-31b}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      - MODEL_NAME=${MODEL_NAME:-gpt-4o-mini}
       - WHISPER_MODEL=${WHISPER_MODEL:-base}
       - INTENT_CONFIDENCE_THRESHOLD=${INTENT_CONFIDENCE_THRESHOLD:-0.65}
       - MAX_RETRIES=${MAX_RETRIES:-3}
       - DEBUG=${DEBUG:-false}
+      - CORS_ORIGINS=["http://localhost:3000","http://localhost:5173","http://frontend:80"]
     volumes:
       - uploads:/tmp/uploads
       - traces:/tmp/traces

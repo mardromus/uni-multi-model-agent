@@ -6,6 +6,7 @@ Analyze the user input and determine their intent. Consider:
 - Text message content
 - Attached files (images, PDFs, audio)
 - YouTube URLs if present
+- Conversation history to resolve any pronouns/references to past files/questions
 
 Available intents:
 - general_question: General Q&A
@@ -18,6 +19,9 @@ Available intents:
 - cross_input_reasoning: User wants reasoning across multiple inputs
 - action_item_extraction: User wants action items extracted
 - youtube_summary: User wants YouTube video summarized
+
+Conversation History:
+{history}
 
 User text: {text}
 File types present: {file_types}
@@ -63,6 +67,9 @@ Respond in JSON:
 """
 
 RESPONSE_GENERATION_PROMPT = """You are a response generator. Synthesize tool outputs into a clear, helpful answer.
+
+Conversation History:
+{history}
 
 User question: {user_text}
 Intent: {intent}

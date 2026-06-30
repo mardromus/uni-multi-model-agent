@@ -33,7 +33,9 @@ class UploadResponse(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     message: str = ""
+    session_id: str | None = None
     file_ids: list[str] = Field(default_factory=list)
+    conversation_history: list[ChatMessage] = Field(default_factory=list)
     stream: bool = False
 
 

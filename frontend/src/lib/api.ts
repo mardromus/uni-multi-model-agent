@@ -42,6 +42,7 @@ export async function analyzeStream(
   message: string,
   fileIds: string[],
   onEvent: (event: Record<string, unknown>) => void,
+  conversationHistory?: Array<{ role: string; content: string }>,
 ): Promise<void> {
   const response = await fetch(`${API_BASE}/analyze`, {
     method: 'POST',
@@ -50,6 +51,7 @@ export async function analyzeStream(
       message,
       file_ids: fileIds,
       stream: true,
+      conversation_history: conversationHistory || [],
     }),
   })
 

@@ -66,21 +66,21 @@ class PDFParserTool(BaseTool):
 
                 if len(text) < 50 and use_ocr_fallback:
                     # Likely scanned page - use OCR fallback
+                    temp_path = Path(file_path).parent / f"_ocr_page_{page_num}.png"
                     try:
                         from app.tools.ocr_tool import OCRTool
 
                         pix = page.get_pixmap(dpi=150)
-                        temp_path = Path(file_path).parent / f"_ocr_page_{page_num}.png"
                         pix.save(str(temp_path))
 
                         ocr_result = await OCRTool().run(file_path=str(temp_path))
                         text = ocr_result.get("text", "")
                         if text:
                             pages_with_ocr.append(page_num + 1)
-
-                        temp_path.unlink(missing_ok=True)
                     except Exception as ocr_err:
                         logger.warning("OCR fallback failed for page %d: %s", page_num, ocr_err)
+                    finally:
+                        temp_path.unlink(missing_ok=True)
 
                 if text:
                     pages_text.append(f"--- Page {page_num + 1} ---\n{text}")

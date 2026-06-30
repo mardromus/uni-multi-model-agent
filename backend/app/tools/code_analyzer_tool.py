@@ -77,7 +77,7 @@ class CodeAnalyzerTool(BaseTool):
         detected_lang = language_hint or self._detect_language(code)
         settings = get_settings()
 
-        if not settings.openai_api_key:
+        if not settings.cerebras_api_key:
             return self._basic_analysis(code, detected_lang)
 
         try:

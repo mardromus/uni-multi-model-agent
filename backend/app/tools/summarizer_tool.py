@@ -56,7 +56,7 @@ class SummarizerTool(BaseTool):
             }
 
         settings = get_settings()
-        if not settings.openai_api_key:
+        if not settings.cerebras_api_key:
             return self._fallback_summary(text)
 
         try:

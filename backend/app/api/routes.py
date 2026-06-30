@@ -117,13 +117,26 @@ async def analyze(
     agent: AgentOrchestrator = Depends(get_agent_orchestrator),
 ):
     """Analyze inputs with optional streaming."""
+    history = [{
+        "role": m.role,
+        "content": m.content
+    } for m in request.conversation_history]
+
     if request.stream:
 
         async def event_generator():
-            async for event in agent.run_stream(
-                text=request.message, file_ids=request.file_ids
-            ):
-                yield f"data: {json.dumps(event, default=str)}\n\n"
+            try:
+                async for event in agent.run_stream(
+                    text=request.message,
+                    file_ids=request.file_ids,
+                    session_id=request.session_id,
+                    conversation_history=history,
+                ):
+                    yield f"data: {json.dumps(event, default=str)}\n\n"
+            except Exception as e:
+                logger.exception("Streaming pipeline failed")
+                error_event = {"event": "error", "message": str(e)}
+                yield f"data: {json.dumps(error_event)}\n\n"
 
         return StreamingResponse(
             event_generator(),
@@ -131,7 +144,12 @@ async def analyze(
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
 
-    response, _ = await agent.run(text=request.message, file_ids=request.file_ids)
+    response, _ = await agent.run(
+        text=request.message,
+        file_ids=request.file_ids,
+        session_id=request.session_id,
+        conversation_history=history,
+    )
     return AnalyzeResponse(response=response)
 
 

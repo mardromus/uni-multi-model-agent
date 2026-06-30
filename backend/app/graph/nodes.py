@@ -23,6 +23,7 @@ from app.prompts.templates import (
 )
 from app.services.llm_service import LLMService
 from app.tools.base import ToolRegistry
+from app.utils.helpers import extract_youtube_urls
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +38,56 @@ async def input_parser_node(state: AgentState) -> dict[str, Any]:
     if processed.text:
         extracted.append(processed.text)
 
+    # Re-extract historical text blocks if present to support follow-ups
+    history = state.get("conversation_history") or []
+    for msg in history:
+        if msg.get("role") == "assistant":
+            content = msg.get("content", "")
+            if "[Extracted Text/Content:\n" in content:
+                try:
+                    start_marker = "[Extracted Text/Content:\n"
+                    end_marker = "\n]"
+                    start_idx = content.find(start_marker) + len(start_marker)
+                    end_idx = content.find(end_marker, start_idx)
+                    if start_idx != -1 and end_idx != -1:
+                        historical_extracted = content[start_idx:end_idx].strip()
+                        if historical_extracted and historical_extracted not in extracted:
+                            extracted.append(historical_extracted)
+                except Exception as e:
+                    logger.warning("Failed parsing historical extracted text: %s", e)
+
     return {
         "extracted_texts": extracted,
         "reasoning_steps": ["Input parsed and normalized"],
         "start_time_ms": time.time() * 1000,
     }
+
+
+def _format_conversation_history(history_list: list[dict[str, str]]) -> str:
+    """Format history list into a clean string, replacing bulky extracted text blocks with summary tags."""
+    history_str = ""
+    for msg in history_list:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if "[Extracted Text/Content:\n" in content:
+            content_clean = content
+            try:
+                start_marker = "[Extracted Text/Content:\n"
+                end_marker = "\n]"
+                start_idx = content.find(start_marker)
+                end_idx = content.find(end_marker, start_idx + len(start_marker))
+                if start_idx != -1 and end_idx != -1:
+                    content_clean = (
+                        content[:start_idx]
+                        + "[Extracted Document Content]"
+                        + content[end_idx + len(end_marker):]
+                    )
+            except Exception:
+                pass
+            history_str += f"{role.capitalize()}: {content_clean.strip()}\n"
+        else:
+            history_str += f"{role.capitalize()}: {content.strip()}\n"
+    return history_str
 
 
 async def intent_detector_node(state: AgentState) -> dict[str, Any]:
@@ -53,9 +99,13 @@ async def intent_detector_node(state: AgentState) -> dict[str, Any]:
     # Rule-based intent hints
     intent = _rule_based_intent(processed)
 
+    # Format history for classifier
+    history_str = _format_conversation_history(state.get("conversation_history") or [])
+
     if llm.is_configured:
         try:
             prompt = INTENT_DETECTION_PROMPT.format(
+                history=history_str or "None",
                 text=processed.text or "",
                 file_types=", ".join(processed.file_types) or "none",
                 youtube_urls=", ".join(processed.youtube_urls) or "none",
@@ -96,53 +146,70 @@ def _rule_based_intent(processed) -> IntentResult:
     text = (processed.text or "").lower()
     file_types = processed.file_types
 
-    if processed.youtube_urls or "youtube" in text:
+    if processed.youtube_urls or "youtube" in text or "youtu.be" in text:
         return IntentResult(
             intent=IntentType.YOUTUBE_SUMMARY,
             confidence=0.85,
             reasoning="YouTube URL detected",
         )
-    if "sentiment" in text:
+    if "sentiment" in text or "how do you feel" in text:
         return IntentResult(
             intent=IntentType.SENTIMENT, confidence=0.9, reasoning="Sentiment keyword"
         )
-    if any(kw in text for kw in ["summarize", "summary", "summarise"]):
+    if any(kw in text for kw in ["summarize", "summary", "summarise", "tldr", "tl;dr", "key points"]):
         return IntentResult(
             intent=IntentType.SUMMARY, confidence=0.85, reasoning="Summary keyword"
         )
-    if any(kw in text for kw in ["code", "function", "bug", "debug", "explain this"]):
+    if any(kw in text for kw in ["code", "function", "bug", "debug", "explain this", "what does this code"]):
         return IntentResult(
             intent=IntentType.CODE_EXPLANATION, confidence=0.8, reasoning="Code keyword"
         )
-    if "compare" in text or len(file_types) > 1:
+    if "compare" in text or "same topic" in text or "discuss the same" in text:
         return IntentResult(
             intent=IntentType.CROSS_INPUT_REASONING,
-            confidence=0.75,
-            reasoning="Multiple inputs or comparison",
+            confidence=0.8,
+            reasoning="Comparison keyword",
         )
-    if "action item" in text or "todo" in text or "tasks" in text:
+    if any(kw in text for kw in ["action item", "todo", "tasks", "action items", "next steps"]):
         return IntentResult(
             intent=IntentType.ACTION_ITEM_EXTRACTION,
-            confidence=0.8,
+            confidence=0.85,
             reasoning="Action items keyword",
         )
-    if "image" in file_types or "ocr" in text or "extract text" in text:
-        return IntentResult(intent=IntentType.OCR, confidence=0.85, reasoning="Image/OCR input")
-    if "audio" in file_types or "transcribe" in text or "transcript" in text:
+    if "transcribe" in text or "transcript" in text or "audio" in text:
+        return IntentResult(
+            intent=IntentType.TRANSCRIPTION, confidence=0.85, reasoning="Transcription keyword"
+        )
+    if "audio" in file_types or "transcribe" in text:
         return IntentResult(
             intent=IntentType.TRANSCRIPTION, confidence=0.85, reasoning="Audio input"
         )
+    if "image" in file_types or "ocr" in text or "extract text" in text or ("explain" in text and "image" in file_types):
+        return IntentResult(intent=IntentType.OCR, confidence=0.85, reasoning="Image/OCR input")
     if "pdf" in file_types:
-        if "summarize" in text or "summary" in text:
+        if any(kw in text for kw in ["summarize", "summary", "summarise"]):
             return IntentResult(
-                intent=IntentType.SUMMARY, confidence=0.7, reasoning="PDF with summary intent"
+                intent=IntentType.SUMMARY, confidence=0.75, reasoning="PDF with summary intent"
+            )
+        if any(kw in text for kw in ["action item", "todo", "tasks"]):
+            return IntentResult(
+                intent=IntentType.ACTION_ITEM_EXTRACTION,
+                confidence=0.85,
+                reasoning="PDF with action items",
+            )
+        if text:
+            # PDF + a question → cross-input reasoning
+            return IntentResult(
+                intent=IntentType.CROSS_INPUT_REASONING,
+                confidence=0.7,
+                reasoning="PDF with user query",
             )
         return IntentResult(
             intent=IntentType.SUMMARY,
-            confidence=0.55,
+            confidence=0.50,
             reasoning="PDF without clear intent - may need clarification",
             requires_clarification=True,
-            clarification_question="What should I do with this PDF - extract text, summarize, or analyze sentiment?",
+            clarification_question="What should I do with this PDF — extract text, summarize, analyze sentiment, or answer a specific question?",
         )
     if not text and not file_types:
         return IntentResult(
@@ -152,6 +219,15 @@ def _rule_based_intent(processed) -> IntentResult:
             requires_clarification=True,
             clarification_question="How can I help you? Please provide text, an image, PDF, or audio file.",
         )
+
+    # Multiple files → cross input reasoning
+    if len(file_types) > 1:
+        return IntentResult(
+            intent=IntentType.CROSS_INPUT_REASONING,
+            confidence=0.75,
+            reasoning="Multiple files detected",
+        )
+
     return IntentResult(
         intent=IntentType.GENERAL_QUESTION,
         confidence=0.7,
@@ -160,15 +236,13 @@ def _rule_based_intent(processed) -> IntentResult:
 
 
 def _generate_clarification(processed, intent: IntentResult) -> str:
-    text = processed.text or ""
-    file_types = ", ".join(processed.file_types) or "none"
     if "pdf" in processed.file_types:
-        return "What should I do with this PDF - extract text, summarize, or analyze sentiment?"
+        return "What should I do with this PDF — extract text, summarize, find action items, or answer a specific question?"
     if len(processed.file_types) > 1:
         return "Would you like a summary, comparison, or cross-input analysis of these files?"
-    if not text and not processed.file_types:
+    if not processed.text and not processed.file_types:
         return "How can I help you today?"
-    return f"Would you like me to summarize, analyze sentiment, or answer a question about this content?"
+    return "Would you like me to summarize, analyze sentiment, or answer a question about this content?"
 
 
 async def clarification_node(state: AgentState) -> dict[str, Any]:
@@ -192,7 +266,7 @@ async def planning_node(state: AgentState) -> dict[str, Any]:
 
         registry = get_tool_registry()
 
-    steps = _build_plan(processed, intent, registry)
+    steps = _build_plan(processed, intent, registry, state.get("extracted_texts", []))
     plan = ExecutionPlan(steps=steps)
 
     return {
@@ -203,13 +277,38 @@ async def planning_node(state: AgentState) -> dict[str, Any]:
     }
 
 
-def _build_plan(processed, intent: IntentResult, registry: ToolRegistry) -> list[PlanStep]:
+def _build_plan(
+    processed,
+    intent: IntentResult,
+    registry: ToolRegistry,
+    extracted_texts: list[str] | None = None,
+) -> list[PlanStep]:
     """Build execution plan based on intent and inputs."""
     steps: list[PlanStep] = []
     step_num = 1
     text = processed.text or ""
+    has_audio = "audio" in processed.file_types
+    has_image = "image" in processed.file_types
+    has_pdf = "pdf" in processed.file_types
+    multi_file = len(processed.file_paths) > 1
 
-    # File extraction steps
+    # Check if there is historical extracted content (excluding current user query)
+    user_text = processed.text or ""
+    has_historical_extracted = False
+    if extracted_texts:
+        actual_texts = [t for t in extracted_texts if t != user_text]
+        if actual_texts:
+            has_historical_extracted = True
+
+    has_extracted = (
+        has_pdf
+        or has_image
+        or has_audio
+        or processed.youtube_urls
+        or has_historical_extracted
+    )
+
+    # --- File extraction steps ---
     for i, (path, ftype) in enumerate(zip(processed.file_paths, processed.file_types)):
         if ftype == "image":
             steps.append(
@@ -242,7 +341,7 @@ def _build_plan(processed, intent: IntentResult, registry: ToolRegistry) -> list
             )
             step_num += 1
 
-    # YouTube steps
+    # --- YouTube steps (from user text) ---
     for url in processed.youtube_urls:
         steps.append(
             PlanStep(
@@ -254,74 +353,142 @@ def _build_plan(processed, intent: IntentResult, registry: ToolRegistry) -> list
         )
         step_num += 1
 
-    # Intent-based steps
-    intent_tool_map = {
-        IntentType.SUMMARY: "summarizer",
-        IntentType.SENTIMENT: "sentiment",
-        IntentType.CODE_EXPLANATION: "code_analyzer",
-        IntentType.YOUTUBE_SUMMARY: "summarizer",
-        IntentType.ACTION_ITEM_EXTRACTION: "summarizer",
-    }
+    # --- NOTE: YouTube URLs hidden inside PDF content will be discovered
+    # dynamically in tool_executor_node after PDF is parsed ---
 
-    if intent.intent == IntentType.OCR and not any(s.tool_name == "ocr" for s in steps):
-        # Text-only OCR request without image
-        pass
-    elif intent.intent == IntentType.CODE_EXPLANATION:
-        code = _extract_code_block(text) or text
+    # --- Intent-based downstream steps ---
+
+    if intent.intent == IntentType.CODE_EXPLANATION:
+        # For image with code: OCR already in steps; code_analyzer uses extracted text
+        code = _extract_code_block(text) or text if not has_extracted else "{{extracted_text}}"
         steps.append(
             PlanStep(
                 step_number=step_num,
                 tool_name="code_analyzer",
-                description="Analyze provided code",
+                description="Analyze code (language, bugs, complexity)",
                 input_data={"code": code},
             )
         )
         step_num += 1
-    elif intent.intent in intent_tool_map:
-        tool_name = intent_tool_map[intent.intent]
+
+    elif intent.intent == IntentType.SENTIMENT:
+        target_text = "{{extracted_text}}" if has_extracted else text
         steps.append(
             PlanStep(
                 step_number=step_num,
-                tool_name=tool_name,
-                description=f"Apply {tool_name} based on intent",
-                input_data={"text": "{{extracted_text}}", "context": text},
+                tool_name="sentiment",
+                description="Analyze sentiment of content",
+                input_data={"text": target_text},
             )
         )
         step_num += 1
 
-    # Cross-input reasoning for multiple sources
-    if (
-        len(steps) > 1
-        or len(processed.file_paths) > 1
-        or intent.intent in (IntentType.COMPARISON, IntentType.CROSS_INPUT_REASONING)
-    ):
+    elif intent.intent in (IntentType.SUMMARY, IntentType.ACTION_ITEM_EXTRACTION):
+        target_text = "{{extracted_text}}" if has_extracted else text
+        context = text if intent.intent == IntentType.ACTION_ITEM_EXTRACTION else ""
         steps.append(
             PlanStep(
                 step_number=step_num,
-                tool_name="cross_input_reasoner",
-                description="Combine all inputs into unified answer",
-                input_data={
-                    "user_question": text,
-                    "tool_outputs": "{{tool_outputs}}",
-                    "extracted_texts": "{{extracted_texts}}",
-                },
+                tool_name="summarizer",
+                description=(
+                    "Extract action items from content"
+                    if intent.intent == IntentType.ACTION_ITEM_EXTRACTION
+                    else "Generate structured summary"
+                ),
+                input_data={"text": target_text, "context": context},
             )
         )
+        step_num += 1
 
-    # Fallback: general question with no tools
-    if not steps and text:
-        steps.append(
-            PlanStep(
-                step_number=1,
-                tool_name="cross_input_reasoner",
-                description="Answer general question",
-                input_data={
-                    "user_question": text,
-                    "tool_outputs": [],
-                    "extracted_texts": [text],
-                },
+    elif intent.intent == IntentType.YOUTUBE_SUMMARY:
+        # YouTube steps already added above; chain summarizer
+        if processed.youtube_urls:  # Direct YouTube URL in text
+            steps.append(
+                PlanStep(
+                    step_number=step_num,
+                    tool_name="summarizer",
+                    description="Summarize YouTube transcript",
+                    input_data={"text": "{{extracted_text}}", "context": text},
+                )
             )
-        )
+            step_num += 1
+
+    elif intent.intent == IntentType.TRANSCRIPTION:
+        # Audio transcription already added; if user implies summary, add it
+        if has_audio and any(kw in text.lower() for kw in ["summarize", "summary", "key points", "brief"]):
+            steps.append(
+                PlanStep(
+                    step_number=step_num,
+                    tool_name="summarizer",
+                    description="Summarize audio transcript",
+                    input_data={"text": "{{extracted_text}}", "context": text},
+                )
+            )
+            step_num += 1
+
+    # Auto-chain summarizer after audio when intent is not pure transcription
+    if has_audio and intent.intent not in (IntentType.TRANSCRIPTION, IntentType.SENTIMENT, IntentType.CODE_EXPLANATION):
+        # Check if summarizer wasn't already added
+        if not any(s.tool_name == "summarizer" for s in steps):
+            steps.append(
+                PlanStep(
+                    step_number=step_num,
+                    tool_name="summarizer",
+                    description="Summarize audio transcript",
+                    input_data={"text": "{{extracted_text}}", "context": text},
+                )
+            )
+            step_num += 1
+
+    # Cross-input reasoning for multiple files or explicit comparison intents
+    if (
+        multi_file
+        or intent.intent in (IntentType.COMPARISON, IntentType.CROSS_INPUT_REASONING)
+        or (has_pdf and text and intent.intent == IntentType.CROSS_INPUT_REASONING)
+    ):
+        if not any(s.tool_name == "cross_input_reasoner" for s in steps):
+            steps.append(
+                PlanStep(
+                    step_number=step_num,
+                    tool_name="cross_input_reasoner",
+                    description="Combine all inputs into unified answer",
+                    input_data={
+                        "user_question": text,
+                        "tool_outputs": "{{tool_outputs}}",
+                        "extracted_texts": "{{extracted_texts}}",
+                    },
+                )
+            )
+            step_num += 1
+
+    # Fallback: general question with no files and no tool steps
+    if not steps:
+        if text:
+            steps.append(
+                PlanStep(
+                    step_number=1,
+                    tool_name="cross_input_reasoner",
+                    description="Answer general question",
+                    input_data={
+                        "user_question": text,
+                        "tool_outputs": [],
+                        "extracted_texts": [text],
+                    },
+                )
+            )
+        else:
+            steps.append(
+                PlanStep(
+                    step_number=1,
+                    tool_name="cross_input_reasoner",
+                    description="Process combined inputs",
+                    input_data={
+                        "user_question": "",
+                        "tool_outputs": "{{tool_outputs}}",
+                        "extracted_texts": "{{extracted_texts}}",
+                    },
+                )
+            )
 
     return steps
 
@@ -334,7 +501,7 @@ def _extract_code_block(text: str) -> str | None:
 
 
 async def tool_executor_node(state: AgentState) -> dict[str, Any]:
-    """Execute planned tools sequentially."""
+    """Execute planned tools sequentially with dynamic YouTube URL discovery."""
     plan_steps = state.get("plan_steps", [])
     registry = state.get("_tool_registry")
     if registry is None:
@@ -348,27 +515,39 @@ async def tool_executor_node(state: AgentState) -> dict[str, Any]:
     extracted_texts: list[str] = list(state.get("extracted_texts", []))
     combined_text_parts: list[str] = []
 
-    for step in plan_steps:
+    # Track YouTube URLs already scheduled to avoid duplicates
+    scheduled_yt_urls: set[str] = set(
+        step.input_data.get("url", "") for step in plan_steps if step.tool_name == "youtube"
+    )
+
+    # We may dynamically append steps during iteration, so use an index loop
+    i = 0
+    while i < len(plan_steps):
+        step = plan_steps[i]
         step.status = ToolStatus.RUNNING
         start = time.time()
 
         try:
+            processed = state.get("processed_input")
+            user_text = processed.text if processed else ""
             input_data = _resolve_inputs(
                 step.input_data,
                 extracted_texts,
                 tool_outputs,
                 "\n\n".join(extracted_texts),
+                user_text,
             )
-            result = await _execute_with_retry(registry, step.tool_name, input_data, settings.max_retries)
+            result = await _execute_with_retry(
+                registry, step.tool_name, input_data, settings.max_retries
+            )
             duration = (time.time() - start) * 1000
 
             step.status = ToolStatus.SUCCESS
             step.output_data = result
             step.duration_ms = duration
 
-            # Collect extracted text
-            text_keys = ["text", "transcript", "transcript"]
-            for key in text_keys:
+            # --- Collect extracted text (fixed: no duplicates in text_keys) ---
+            for key in ["text", "transcript"]:
                 if key in result and result[key]:
                     extracted_texts.append(result[key])
                     combined_text_parts.append(result[key])
@@ -383,6 +562,46 @@ async def tool_executor_node(state: AgentState) -> dict[str, Any]:
                     duration_ms=duration,
                 )
             )
+
+            # --- DYNAMIC YOUTUBE URL DISCOVERY (Test Case 4) ---
+            # After PDF/OCR extraction, scan the new text for YouTube URLs
+            if step.tool_name in ("pdf_parser", "ocr"):
+                new_extracted = result.get("text", "")
+                if new_extracted:
+                    found_urls = extract_youtube_urls(new_extracted)
+                    for url in found_urls:
+                        if url not in scheduled_yt_urls:
+                            scheduled_yt_urls.add(url)
+                            # Insert YouTube step immediately after current step
+                            new_yt_step = PlanStep(
+                                step_number=len(plan_steps) + 1,
+                                tool_name="youtube",
+                                description=f"Fetch YouTube transcript from URL found in extracted content: {url}",
+                                input_data={"url": url},
+                            )
+                            plan_steps.insert(i + 1, new_yt_step)
+                            logger.info(
+                                "Dynamically added YouTube step for URL found in extracted content: %s",
+                                url,
+                            )
+                            # Also insert a summarizer step after the YouTube step if not already planned
+                            already_has_summarizer = any(
+                                s.tool_name == "summarizer" for s in plan_steps[i + 2:]
+                            )
+                            if not already_has_summarizer:
+                                summarizer_step = PlanStep(
+                                    step_number=len(plan_steps) + 1,
+                                    tool_name="summarizer",
+                                    description="Summarize YouTube transcript",
+                                    input_data={
+                                        "text": "{{extracted_text}}",
+                                        "context": state.get("processed_input", {}).text
+                                        if hasattr(state.get("processed_input", {}), "text")
+                                        else "",
+                                    },
+                                )
+                                plan_steps.insert(i + 2, summarizer_step)
+
         except Exception as e:
             duration = (time.time() - start) * 1000
             step.status = ToolStatus.FAILED
@@ -399,6 +618,12 @@ async def tool_executor_node(state: AgentState) -> dict[str, Any]:
             )
             logger.error("Tool %s failed: %s", step.tool_name, e)
 
+        i += 1
+
+    # Renumber steps for display consistency
+    for idx, s in enumerate(plan_steps):
+        s.step_number = idx + 1
+
     combined_text = "\n\n".join(combined_text_parts)
 
     return {
@@ -413,18 +638,29 @@ async def tool_executor_node(state: AgentState) -> dict[str, Any]:
 
 
 def _resolve_inputs(
-    input_data: dict, extracted_texts: list[str], tool_outputs: list, text: str = ""
+    input_data: dict,
+    extracted_texts: list[str],
+    tool_outputs: list,
+    text: str = "",
+    user_text: str = "",
 ) -> dict:
     """Resolve template placeholders in tool inputs."""
     resolved = {}
-    combined = text or "\n\n".join(extracted_texts)
+
+    # Filter out user text query from actual extracted content to prevent self-summarization
+    actual_texts = [t for t in extracted_texts if t != user_text]
+    if actual_texts:
+        combined = "\n\n".join(actual_texts)
+    else:
+        combined = text or "\n\n".join(extracted_texts)
+
     for key, value in input_data.items():
         if value == "{{extracted_text}}":
             resolved[key] = combined
         elif value == "{{tool_outputs}}":
             resolved[key] = [o["output"] for o in tool_outputs]
         elif value == "{{extracted_texts}}":
-            resolved[key] = extracted_texts
+            resolved[key] = actual_texts if actual_texts else extracted_texts
         else:
             resolved[key] = value
     return resolved
@@ -515,12 +751,18 @@ async def _generate_final_answer(state: AgentState, settings) -> str:
     # Check cross_input_reasoner output first
     for output in tool_outputs:
         if "unified_answer" in output.get("output", {}):
-            return output["output"]["unified_answer"]
+            ans = output["output"]["unified_answer"]
+            if ans and ans.strip():
+                return ans
 
     llm = LLMService(settings)
+    # Format history for response generation
+    history_str = _format_conversation_history(state.get("conversation_history") or [])
+
     if llm.is_configured:
         try:
             prompt = RESPONSE_GENERATION_PROMPT.format(
+                history=history_str or "None",
                 user_text=processed.text or "",
                 intent=intent.intent.value if intent else "general",
                 tool_outputs=json.dumps(
@@ -544,7 +786,7 @@ async def _generate_final_answer(state: AgentState, settings) -> str:
                     parts.append(f"- {b}")
             if out.get("five_sentences"):
                 parts.append(f"\n{out['five_sentences']}")
-        elif "label" in out:
+        elif "label" in out and "justification" in out:
             parts.append(f"**Sentiment:** {out['label']} (confidence: {out['confidence']:.0%})")
             parts.append(f"*{out.get('justification', '')}*")
         elif "explanation" in out:
@@ -554,8 +796,10 @@ async def _generate_final_answer(state: AgentState, settings) -> str:
                 parts.append("**Potential Bugs:**")
                 for b in out["bugs"]:
                     parts.append(f"- {b}")
+            if out.get("time_complexity"):
+                parts.append(f"**Time Complexity:** {out['time_complexity']}")
         elif "transcript" in out and out["transcript"]:
-            parts.append(f"**Transcript:** {out['transcript'][:1000]}")
+            parts.append(f"**Transcript:** {out['transcript'][:2000]}")
         elif "text" in out and out["text"]:
             parts.append(out["text"][:2000])
 

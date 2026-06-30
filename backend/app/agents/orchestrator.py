@@ -83,6 +83,7 @@ class AgentOrchestrator:
         text: str = "",
         file_ids: list[str] | None = None,
         session_id: str | None = None,
+        conversation_history: list[dict[str, str]] | None = None,
     ):
         """Stream agent execution events."""
         session_id = session_id or str(uuid.uuid4())
@@ -93,7 +94,10 @@ class AgentOrchestrator:
         yield {"event": "input_processed", "input_type": processed.input_type.value}
 
         response, sid = await self.run(
-            text=text, file_ids=file_ids, session_id=session_id
+            text=text,
+            file_ids=file_ids,
+            session_id=session_id,
+            conversation_history=conversation_history,
         )
 
         if response.execution_plan:

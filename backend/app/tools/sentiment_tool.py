@@ -54,7 +54,7 @@ class SentimentTool(BaseTool):
             }
 
         settings = get_settings()
-        if not settings.openai_api_key:
+        if not settings.cerebras_api_key:
             return self._rule_based_sentiment(text)
 
         try:

@@ -73,12 +73,18 @@ class AudioTool(BaseTool):
             }
 
         try:
+            import asyncio
+
             model = _get_whisper_model()
             options: dict[str, Any] = {"fp16": False}
             if language_hint:
                 options["language"] = language_hint
 
-            result = model.transcribe(file_path, **options)
+            # Run CPU-bound transcription in thread pool to avoid blocking event loop
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None, lambda: model.transcribe(file_path, **options)
+            )
 
             segments = []
             confidences: list[float] = []

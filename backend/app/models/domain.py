@@ -77,6 +77,8 @@ class ExecutionPlan(BaseModel):
     plan_id: str = Field(default_factory=lambda: str(uuid4()))
     steps: list[PlanStep] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    estimated_tokens: int = 0
+    estimated_cost_usd: float = 0.0
 
 
 class ToolTraceEntry(BaseModel):

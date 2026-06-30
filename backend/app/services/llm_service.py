@@ -28,7 +28,7 @@ class LLMService:
 
     @property
     def is_configured(self) -> bool:
-        return bool(self.settings.openai_api_key)
+        return bool(self.settings.cerebras_api_key)
 
     async def invoke(self, system: str, user: str, retries: int = 3) -> str:
         """Invoke LLM with retry logic."""
@@ -53,3 +53,24 @@ class LLMService:
         if start >= 0 and end > start:
             return json.loads(content[start:end])
         raise ValueError(f"Could not parse JSON from LLM response: {content[:200]}")
+
+    async def astream(self, system: str, user: str, retries: int = 3):
+        """Stream LLM response tokens."""
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        last_error = None
+        for attempt in range(retries):
+            try:
+                async for chunk in self.llm.astream(
+                    [SystemMessage(content=system), HumanMessage(content=user)]
+                ):
+                    content = chunk.content
+                    if isinstance(content, str):
+                        yield content
+                    elif isinstance(content, list):
+                        yield "".join(str(c) for c in content)
+                return
+            except Exception as e:
+                last_error = e
+                logger.warning("LLM astream attempt %d failed: %s", attempt + 1, e)
+        raise RuntimeError(f"LLM astream failed after {retries} retries: {last_error}")

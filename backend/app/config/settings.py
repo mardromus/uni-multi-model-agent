@@ -18,7 +18,9 @@ class Settings(BaseSettings):
     # LLM
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
-    model_name: str = "gpt-4o-mini"
+    cerebras_api_key: str = ""
+    cerebras_base_url: str = "https://api.cerebras.ai/v1"
+    model_name: str = "llama-3.3-70b"
     whisper_model: str = "base"
 
     # Agent
@@ -38,8 +40,8 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # Pricing (USD per 1M tokens) for cost estimator
-    input_token_price: float = 0.15
-    output_token_price: float = 0.60
+    input_token_price: float = 0.85
+    output_token_price: float = 1.20
 
     @property
     def max_upload_bytes(self) -> int:
